@@ -1,25 +1,24 @@
 breed [ taxis taxi ]
 breed [ passengers passenger ]
 
-;ovo radi
 passengers-own [
   id
-  taxiNum
+  calledTaxi?
   d-x
   d-y
 ]
 
-;ovo radi
 taxis-own [
   id
+  passengerId
+  called?
   occupied?
-  destination-x
-  destination-y
+  dest-x
+  dest-y
   pickup-x
   pickup-y
 ]
 
-;ovo radi
 to setup
   clear-all
   setup-road
@@ -28,12 +27,11 @@ to setup
   reset-ticks
 end
 
-;ovo radi
 to setup-road
   ask patches [
     ifelse pxcor mod 7 = 0 or pycor mod 7 = 0 [
       set pcolor black
-    ] [
+    ][
       set pcolor grey
     ]
     if (pxcor mod 7 = 1 or pxcor mod 7 = 6) and pcolor = black [
@@ -43,240 +41,253 @@ to setup-road
       set pcolor red
     ]
   ]
+  show "setup-road COMPLETE"
 end
 
-;ovo radi
 to setup-taxis [num-cars]
-  let counter 0 ;
+  let counter 0
   repeat num-cars [
     set counter counter + 1
     create-taxis 1 [
-      set id counter
       set shape "car"
       set color yellow
       set size 1
+      set heading 0
       setxy 0 0
+      set id counter
+      set passengerId -1
+      set called? false
+      set occupied? false
+      set dest-x 0
+      set dest-y 0
       set pickup-x 0
       set pickup-y 0
-      set occupied? false
+    ]
+  ]
+  show "setup-taxi COMPLETE"
+end
+
+to-report list-of-numbers
+  let numbers-list []
+  let i 15
+  loop [
+    set numbers-list lput (i - 1) numbers-list
+    set numbers-list lput (i + 1) numbers-list
+    set i ( i + 10 )
+    if i > 135 [
+      report numbers-list
     ]
   ]
 end
 
-;ovo radi
 to spawn-people [min-people max-people]
   let num-people random (max-people - min-people + 1) + min-people
-  let counter 0 ;
+  let numbers-list list-of-numbers;
   repeat num-people [
     let spawn-patch one-of patches with [pcolor = grey and any? neighbors with [pcolor = black]]
     if spawn-patch != nobody [
       let dest-patch one-of patches with [pcolor = grey and any? neighbors with [pcolor = black]]
-      set counter counter + 1
+      let newId one-of numbers-list
+      set numbers-list remove newId numbers-list
       create-passengers 1 [
-        set id counter
         set shape "person"
-        set color red
+        set color newId
         set size 1
-        set taxiNum 0
-        setxy [pxcor] of spawn-patch [pycor] of spawn-patch
+        set id newId
+        set calledTaxi? false
         set d-x [pxcor] of dest-patch
         set d-y [pycor] of dest-patch
-        ask dest-patch [ set pcolor yellow ]
+        setxy [pxcor] of spawn-patch [pycor] of spawn-patch
+        ask dest-patch [ set pcolor newId ]
       ]
     ]
   ]
+  show "spawn-people COMPLETE"
 end
 
 to go
-  ifelse not any? turtles with [color = red] [
+  if not any? passengers [
+    show "STOP"
     stop
-  ] [
-    drive
   ]
 
-  ;pozvat funkciju koja pokrece sve taxije ask all taxis to drive
+  show "ASK TAXI"
+  ask taxis [
+    if not occupied? and not called? [
+      if any? passengers with [calledTaxi? = false][
+        let customer one-of passengers with [calledTaxi? = false]
+        if customer != nobody [
+          callTaxi customer
+        ]
+      ]
+    ]
+    if occupied? or called? [
+      drive
+    ]
+  ]
 
-  if ticks mod 25 = 0 [
+  if ticks mod 10 = 0 [
     semaphore
   ]
   tick
   wait 0.1
-
-  go
+  show "GO TICK"
 end
 
-  ; vozi taxi po cesti od tocke 1 do tocke 2 ako naidje na crveno polje stoj i cekaj inace idi
-  ; ako occupied? onda vozi do destinacije odnosno tocaka destination-x destination-y ako si dosa do udaljenosti 1.5 od tog mista istovari putnika
-  ; ako not occupied? AND pickup-x pickup-y razlicito od 0 0 vozi na pickup-x pickup-y i ako si dosa do udaljenosti 1.5 od pickupa pokupi putnika  tamo
-  ; ako je pickup-x pickup-y 0 0 onda callTaxi
+to callTaxi [customer]
+  show (word "callTaxi for passenger: " customer)
+  let available-taxi one-of taxis with [not occupied? and not called?]
+  ifelse available-taxi != nobody [
+    ask available-taxi [
+      set called? true
+      set passengerId [id] of customer
+      set dest-x [d-x] of customer
+      set dest-y [d-y] of customer
+
+      ask customer [
+        set calledTaxi? true
+      ]
+
+      let pickup-patch one-of patches with [
+        any? neighbors with [
+          any? turtles-here with [
+            breed = passengers and [id] of self = [id] of customer
+          ]
+        ]
+        and (pcolor = black or pcolor = red or pcolor = green)
+      ]
+      show (word "CUSTOMER: " customer ",  pickup-patch: " pickup-patch)
+
+      ifelse pickup-patch != nobody [
+        set pickup-x [pxcor] of pickup-patch
+        set pickup-y [pycor] of pickup-patch
+      ][
+        show "No suitable patch found for pickup."
+      ]
+
+    ]
+  ][
+    show "All our taxies are curenlty occupied, please wait."
+  ]
+end
 
 to drive
-  ask taxis [
-    ifelse occupied? [
-      ; If the taxi is occupied, move it towards its destination
-      let shortest-path pathfind [pxcor] of self [pycor] of self destination-x destination-y
-      ifelse length shortest-path > 0 [
-        ; If a path is found, move the taxi along the path
-        let next-patch item 1 shortest-path
-        move-to next-patch
-        ; If the taxi reaches its destination, drop off the passenger
-        if distance patch destination-x destination-y < 1.5 [
-          set occupied? false
-          set destination-x 0
-          set destination-y 0
+  show (word "drive for passenger: " passengerId)
+  let customerId passengerId
+  let customer one-of passengers with [id = customerId]
+
+  ifelse occupied? [
+    ifelse distancexy dest-x dest-y <= 1 [
+      if customer != nobody [
+        ask patches with [pxcor = [d-x] of customer and pycor = [d-y] of customer][
+          set pcolor gray
         ]
-      ] [
-        ; If no path is found, print an error message
-        print (word "No path found for taxi " id)
-      ]
-    ] [
-      ; If the taxi is not occupied, check if there's a pickup location assigned
-      ifelse pickup-x != 0 or pickup-y != 0 [
-        ; If a pickup location is assigned, move towards it
-        let shortest-path (pathfind [pxcor] of self [pycor] of self pickup-x pickup-y)
-        ifelse length shortest-path > 0 [
-          ; If a path is found, move the taxi along the path
-          let next-patch item 1 shortest-path
-          move-to next-patch
-          ; If the taxi reaches the pickup location, pick up the passenger
-          if distance patch pickup-x pickup-y < 1.5 [
-            set occupied? true
-            ; Optionally, you may assign the passenger's destination as the taxi's new target here
-          ]
-        ] [
-          ; If no path is found, print an error message
-          print (word "No path found for taxi " id)
+        ask customer [
+          die
         ]
-      ] [
-        ; If no pickup location is assigned, the taxi can remain idle or roam around
-        ; Add your idle or roaming behavior here
       ]
-    ]
-  ]
-end
-
-
-
-to drive-to [target-x target-y]
-
-  let target-patch patch target-x target-y
-  ifelse distance target-patch > 1.5 [
-    face target-patch
-    if [pcolor] of patch-ahead 1 = black [
-      move-to patch-ahead 1
-    ]
-    ; Add additional logic here to handle red/green semaphore patches
-  ] [
-    ; Arrived near the target, handle pickup or drop-off
-    ifelse occupied? [
-      ; Drop off passenger logic
       set occupied? false
-      ; Reset taxi's target destination to be idle
-      set destination-x 0
-      set destination-y 0
-    ] [
-      ; Pick up passenger logic
-      set occupied? true
-      ; Assign passenger's destination as the taxi's new target
-      ; This requires identifying the passenger and reading their destination
+      set called? false
+      set passengerId -1
+    ][
+      move-to-dest dest-x dest-y
     ]
-  ]
+  ][
+    if called? [
+      ifelse distancexy pickup-x pickup-y <= 1 [
+        if customer != nobody [
 
-end
+          let destination-patch one-of patches with [
+            any? neighbors with [
+              (pxcor = [d-x] of customer) and (pycor = [d-y] of customer)
+            ]
+            and (pcolor = black or pcolor = red or pcolor = green)
+          ]
+          show (word "CUSTOMER: " customer ",  destination-patch: " destination-patch)
 
-; dodatna funkcija koju trebam detaljnije istraziti
-; mozda radi, ChatGPT generirano
+          set dest-x [pxcor] of destination-patch
+          set dest-y [pycor] of destination-patch
 
-to-report process-neighbors [current-patch visited queue path]
-  let action-performed? false
-  let neighbor-list sort-by [distance current-patch] neighbors4
-  foreach neighbor-list [
-    neighbor-patch ->
-    if not member? neighbor-patch visited [
-      set queue fput neighbor-patch queue
-      set visited lput neighbor-patch visited
-      set path lput current-patch path
-      set action-performed? true
-    ]
-  ]
-  report action-performed?
-end
-
-
-to-report pathfind [d1x d1y d2x d2y]
-  let start-patch patch d1x d1y
-  let goal-patch patch d2x d2y
-
-  ifelse start-patch = goal-patch [
-    print "Already at the goal."
-    report []
-  ] [
-    let visited patches
-    let queue []
-
-    ; Initialize the queue with the start patch
-    set queue fput start-patch queue
-
-    ; Initialize the path to an empty list
-    let path []
-
-    let continue? true
-    ; Run BFS
-    while [continue? and (not member? goal-patch visited)] [
-      let current-patch first queue
-      set queue but-first queue
-      let action-performed? process-neighbors current-patch visited queue path
-      if not action-performed? [
-        set continue? false
-      ]
-    ]
-
-    ; Reconstruct the shortest path
-    ifelse member? goal-patch visited [
-      set path lput goal-patch path
-      let shortest-path []
-      let current-node goal-patch
-      while [current-node != start-patch] [
-        let parent-patch item 0 first filter [p -> item 1 p = current-node] path
-        set shortest-path fput parent-patch shortest-path
-        set current-node parent-patch
-      ]
-      ; Reverse the list to get the correct order
-      set shortest-path reverse shortest-path
-      ; Now shortest-path contains the shortest path from start-patch to goal-patch
-      ; Do whatever you need with this path
-      report shortest-path
-    ] [
-      print "No path found."
-      report []
-    ]
-  ]
-end
-
-
-
-
-to callTaxi [taxiId passengerId]
-  ; za dani taxi koji nije occupied (not occupied?) pronadji najblizeg putnika koji nema narucen taxi
-  ; ako putnikov taxiNum je jednak 0 to znaci da nema narucen taksi
-  ; ako se taxiNum razlikuje od 0 ima narucen taxi
-
-  ask passengers with [taxiNum = 0] [
-    let nearest-taxi min-one-of taxis with [not occupied?] [distance myself]
-    if nearest-taxi != nobody [
-      set taxiNum [id] of nearest-taxi
-      ask nearest-taxi [
-        set pickup-x [pxcor] of myself
-        set pickup-y [pycor] of myself
-        ; Optionally, mark the taxi as on its way to pick up, if you're tracking this state
+          ask customer [
+            set color grey
+          ]
+        ]
+        set occupied? true
+      ][
+        move-to-dest pickup-x pickup-y
       ]
     ]
   ]
-
 end
 
-;ovo radi
+to move-to-dest [x y]
+
+  ifelse (pcolor = red)
+  and not (pxcor mod 7 = 0 and pycor mod 7 = 0)
+  and not (pycor mod 7 = 1 and heading = 0)
+  and not (pxcor mod 7 = 1 and heading = 90)
+  and not (pycor mod 7 = 6 and heading = 180)
+  and not (pxcor mod 7 = 6 and heading = 270)
+  [
+    show "Waiting at red light"
+  ][
+    ifelse (xcor mod 7 = 0 and ycor mod 7 = 0) ; AKO SMO NA KRIŽANJU ČEVRTNI FIĆU
+    [
+      ifelse (abs(xcor - x) / 7) >= 1 [
+        ifelse (xcor < x)         [
+          set heading 90 ; "RIGHT"
+          forward 1
+        ][
+          if (xcor > x)          [
+            set heading 270 ; "LEFT"
+            forward 1
+          ]
+        ]
+      ][
+        ifelse (abs(ycor - y) / 7) >= 1 [
+          ifelse (ycor < y)          [
+            set heading 0 ; "UP"
+            forward 1
+          ][
+            if (ycor > y) [
+              set heading 180 ; "DOWN"
+              forward 1
+            ]
+          ]
+        ][
+          if (xcor = x) [
+            ifelse (ycor < y) [
+              set heading 0 ; "UP"
+              forward 1
+            ][
+              if (ycor > y) [
+                set heading 180 ; "DOWN"
+                forward 1
+              ]
+            ]
+          ]
+          if (ycor = y) [
+            ifelse (xcor < x) [
+              set heading 90 ; "RIGHT"
+              forward 1
+            ][
+              if (xcor > x) [
+                set heading 270 ; "LEFT"
+                forward 1
+              ]
+            ]
+          ]
+        ]
+      ]
+    ][
+      forward 1
+    ]
+  ]
+  show (word "move-to-dest: Current position: " xcor ", " ycor " Target: " x ", " y)
+end
+
 to semaphore
+  show "semaphore START"
   ask patches [
     if (pxcor mod 7 = 1 or pxcor mod 7 = 6) and (pcolor = red or pcolor = green) [
       ifelse pcolor = red [
@@ -295,6 +306,7 @@ to semaphore
       ]
     ]
   ]
+  show "semaphore COMPLETE"
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
